@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+websockets
+pyaudio
+torch
+torchaudio
+faster-whisper
+ctranslate2
+transformers
+numpy
+hypothesis
+pytest
+pytest-asyncio
+httpx

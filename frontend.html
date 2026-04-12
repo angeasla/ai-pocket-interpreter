@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Captions — Offline STT &amp; Translation</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;
+    --text:#e4e6ed;--muted:#8b8fa3;--accent:#6c8cff;
+    --accent-hover:#8aa4ff;--danger:#ff6b6b;--success:#51cf66;
+    --radius:8px;
+  }
+  html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text)}
+
+  /* Layout */
+  .app{display:flex;flex-direction:column;height:100%;max-width:960px;margin:0 auto;padding:12px 16px}
+
+  /* Header / toolbar */
+  .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--border)}
+  .toolbar h1{font-size:1.1rem;font-weight:600;white-space:nowrap}
+  .spacer{flex:1}
+
+  /* Status indicator */
+  .status{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted)}
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--danger);flex-shrink:0}
+  .status-dot.connected{background:var(--success)}
+  .status-dot.reconnecting{background:#fcc419;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  /* Controls */
+  select,button{
+    font-size:.85rem;padding:6px 12px;border-radius:var(--radius);border:1px solid var(--border);
+    background:var(--surface);color:var(--text);cursor:pointer;transition:border-color .15s
+  }
+  select:hover,button:hover{border-color:var(--accent)}
+  button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+
+  /* Caption area */
+  .captions{flex:1;overflow-y:auto;padding:16px 0;display:flex;flex-direction:column;gap:6px}
+  .caption-line{
+    padding:8px 12px;border-radius:var(--radius);background:var(--surface);
+    line-height:1.5;font-size:1rem;word-wrap:break-word;animation:fadeIn .2s ease
+  }
+  @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  /* Multi-view grid */
+  .captions.multiview{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .multiview .mv-column{display:flex;flex-direction:column;gap:6px;min-width:0}
+  .mv-column .mv-header{font-size:.75rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:4px;position:sticky;top:0;background:var(--bg);z-index:1}
+  .mv-column .caption-line{font-size:.9rem}
+
+  /* Empty state */
+  .empty-state{display:flex;align-items:center;justify-content:center;flex:1;color:var(--muted);font-size:.95rem;text-align:center;padding:40px 20px;line-height:1.6}
+
+  /* Responsive */
+  @media(max-width:640px){
+    .app{padding:8px 10px}
+    .toolbar{gap:8px}
+    .toolbar h1{font-size:.95rem}
+    .captions.multiview{grid-template-columns:1fr;gap:14px}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="toolbar">
+    <h1>&#127908; Live Captions</h1>
+    <div class="status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Disconnected</span>
+    </div>
+    <div class="spacer"></div>
+    <select id="langSelect" aria-label="Select caption language">
+      <option value="en">English</option>
+      <option value="el">Greek</option>
+      <option value="es">Spanish</option>
+    </select>
+    <button id="mvToggle" aria-label="Toggle multi-view">Multi-view</button>
+  </div>
+
+  <div class="captions" id="captions">
+    <div class="empty-state" id="emptyState">Waiting for speech&hellip;</div>
+  </div>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  // DOM refs
+  var captions   = document.getElementById("captions");
+  var emptyState = document.getElementById("emptyState");
+  var langSelect = document.getElementById("langSelect");
+  var mvToggle   = document.getElementById("mvToggle");
+  var statusDot  = document.getElementById("statusDot");
+  var statusText = document.getElementById("statusText");
+
+  // State
+  var ws = null;
+  var multiview = false;
+  var reconnectDelay = 500;   // ms, doubles each attempt up to 16s
+  var MAX_RECONNECT  = 16000;
+
+  // Multi-view column containers (created lazily)
+  var mvColumns = null; // {en: el, el: el, es: el}
+
+  // ---- Status helpers ----
+  function setStatus(state) {
+    statusDot.className = "status-dot " + state;
+    if (state === "connected")     statusText.textContent = "Connected";
+    else if (state === "reconnecting") statusText.textContent = "Reconnecting\u2026";
+    else                           statusText.textContent = "Disconnected";
+  }
+
+  // ---- Caption rendering ----
+  function clearEmpty() {
+    if (emptyState) { emptyState.remove(); emptyState = null; }
+  }
+
+  function appendSingleView(payload) {
+    clearEmpty();
+    var lang = langSelect.value;
+    var text = payload.translations[lang];
+    if (text === undefined || text === null) text = "";
+    var div = document.createElement("div");
+    div.className = "caption-line";
+    div.textContent = text || "(no translation)";
+    captions.appendChild(div);
+    captions.scrollTop = captions.scrollHeight;
+  }
+
+  function ensureMultiviewColumns() {
+    if (mvColumns) return;
+    captions.innerHTML = "";
+    mvColumns = {};
+    var langs = [
+      {code: "en", label: "English"},
+      {code: "el", label: "Greek"},
+      {code: "es", label: "Spanish"}
+    ];
+    for (var i = 0; i < langs.length; i++) {
+      var col = document.createElement("div");
+      col.className = "mv-column";
+      var header = document.createElement("div");
+      header.className = "mv-header";
+      header.textContent = langs[i].label;
+      col.appendChild(header);
+      captions.appendChild(col);
+      mvColumns[langs[i].code] = col;
+    }
+  }
+
+  function appendMultiView(payload) {
+    clearEmpty();
+    ensureMultiviewColumns();
+    var codes = ["en", "el", "es"];
+    for (var i = 0; i < codes.length; i++) {
+      var text = payload.translations[codes[i]];
+      if (text === undefined || text === null) text = "";
+      var div = document.createElement("div");
+      div.className = "caption-line";
+      div.textContent = text || "(no translation)";
+      mvColumns[codes[i]].appendChild(div);
+    }
+    // scroll all columns
+    for (var j = 0; j < codes.length; j++) {
+      mvColumns[codes[j]].scrollTop = mvColumns[codes[j]].scrollHeight;
+    }
+    captions.scrollTop = captions.scrollHeight;
+  }
+
+  // ---- Multi-view toggle ----
+  mvToggle.addEventListener("click", function() {
+    multiview = !multiview;
+    mvToggle.classList.toggle("active", multiview);
+    if (multiview) {
+      captions.classList.add("multiview");
+      mvColumns = null; // rebuild on next payload
+      captions.innerHTML = "";
+      ensureMultiviewColumns();
+    } else {
+      captions.classList.remove("multiview");
+      mvColumns = null;
+      captions.innerHTML = '<div class="empty-state">Switched to single view</div>';
+    }
+  });
+
+  // ---- WebSocket ----
+  function connect() {
+    var protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    var url = protocol + "//" + location.host + "/ws";
+    ws = new WebSocket(url);
+
+    ws.onopen = function() {
+      setStatus("connected");
+      reconnectDelay = 500; // reset backoff
+    };
+
+    ws.onmessage = function(event) {
+      var payload;
+      try { payload = JSON.parse(event.data); } catch(e) { console.error("Invalid JSON:", e); return; }
+      if (multiview) appendMultiView(payload);
+      else           appendSingleView(payload);
+    };
+
+    ws.onclose = function() {
+      setStatus("reconnecting");
+      scheduleReconnect();
+    };
+
+    ws.onerror = function() {
+      // onclose will fire after onerror, reconnect handled there
+    };
+  }
+
+  function scheduleReconnect() {
+    setTimeout(function() {
+      reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT);
+      connect();
+    }, reconnectDelay);
+  }
+
+  // Start
+  connect();
+})();
+</script>
+</body>
+</html>
