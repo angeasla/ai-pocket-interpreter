@@ -4,6 +4,7 @@ import asyncio
 import logging
 import queue
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -23,6 +24,48 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Hardware auto-detection
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class HardwareProfile:
+    """Detected hardware capabilities and the compute settings derived from them."""
+    device: str           # "cuda" | "cpu"
+    stt_compute_type: str  # compute_type for faster-whisper
+    nllb_compute_type: str  # compute_type for CTranslate2 NLLB
+
+
+def detect_hardware() -> HardwareProfile:
+    """Detect the best available execution backend and return matching settings.
+
+    Priority order:
+      1. CUDA (Nvidia GPU)  — float16 for Whisper, int8_float16 for NLLB
+      2. CPU fallback       — int8 quantization for both models
+
+    The function never raises; it always returns a usable profile so the
+    application can start on any hardware, including Intel N100 edge devices.
+    """
+    if torch.cuda.is_available():
+        device_name = torch.cuda.get_device_name(0)
+        logger.info("CUDA detected: %s — using GPU acceleration.", device_name)
+        return HardwareProfile(
+            device="cuda",
+            stt_compute_type="float16",
+            nllb_compute_type="int8_float16",
+        )
+
+    logger.warning(
+        "CUDA not available — falling back to CPU (int8). "
+        "Performance will be reduced. Consider using an Nvidia GPU for real-time use."
+    )
+    return HardwareProfile(
+        device="cpu",
+        stt_compute_type="int8",
+        nllb_compute_type="int8",
+    )
 
 app = FastAPI()
 manager = ConnectionManager()
@@ -135,10 +178,12 @@ async def startup() -> None:
     """Load all models, start audio capture, and launch pipeline coroutines."""
     global stt_engine, translation_engine
 
-    # --- Check CUDA availability ---
-    if not torch.cuda.is_available():
-        logger.error("CUDA is not available. A CUDA-enabled GPU is required.")
-        sys.exit(1)
+    # --- Detect hardware and derive compute settings ---
+    hw = detect_hardware()
+    logger.info(
+        "Hardware profile: device=%s  stt=%s  nllb=%s",
+        hw.device, hw.stt_compute_type, hw.nllb_compute_type,
+    )
 
     # --- Load Silero-VAD model ---
     try:
@@ -151,7 +196,10 @@ async def startup() -> None:
 
     # --- Load STT Engine ---
     try:
-        stt_engine = STTEngine(compute_type="int8")
+        stt_engine = STTEngine(
+            device=hw.device,
+            compute_type=hw.stt_compute_type,
+        )
         stt_engine.load()
     except Exception as exc:
         logger.error("Failed to load STT engine: %s", exc)
@@ -162,8 +210,8 @@ async def startup() -> None:
         translation_engine = TranslationEngine(
             model_path="models/nllb-200-distilled-1.3b-ct2",
             tokenizer_name="facebook/nllb-200-distilled-1.3B",
-            device="cpu",
-            compute_type="int8"
+            device=hw.device,
+            compute_type=hw.nllb_compute_type,
         )
         translation_engine.load()
     except Exception as exc:

@@ -39,13 +39,20 @@ Microphone → Silero-VAD → faster-whisper (STT) → Language Mapper → NLLB-
 
 ## Hardware Requirements
 
-Designed for edge devices:
+Designed for edge devices. The application **automatically detects** the best available backend at startup — no configuration needed.
+
+| Hardware | Device | Compute Type | Notes |
+|---|---|---|---|
+| Nvidia GPU (≥ 6 GB VRAM) | `cuda` | float16 / int8_float16 | Recommended for real-time use |
+| Intel N100 / any CPU | `cpu` | int8 / int8 | Fully supported, slower throughput |
+
+Minimum system requirements:
 
 | Resource | Minimum |
 |---|---|
 | CPU | x86-64 with AVX2 (Intel N100 or better) |
 | RAM | 8 GB |
-| GPU VRAM | 6 GB (CUDA) — or CPU-only with int8 quantization |
+| GPU VRAM | 6 GB (CUDA) — optional, falls back to CPU automatically |
 | Storage | ~4 GB for model weights |
 
 ### VRAM Budget (GPU mode)
@@ -53,7 +60,7 @@ Designed for edge devices:
 | Model | Quantization | Est. VRAM |
 |---|---|---|
 | Whisper large-v3-turbo | float16 | ~1.6 GB |
-| NLLB-200 distilled-1.3B | int8 | ~1.3 GB |
+| NLLB-200 distilled-1.3B | int8_float16 | ~1.3 GB |
 | Silero-VAD | float16 | ~10 MB |
 | **Total** | | **~3.0 GB** |
 
@@ -89,7 +96,7 @@ The AI weights are **not** included in the repository. Download them into a `mod
 pip install huggingface_hub
 
 # Download the pre-converted CTranslate2 model
-huggingface-cli download models/nllb-200-distilled-1.3B-ct2-int8 \
+huggingface-cli download JustFrederik/nllb-200-distilled-1.3B-ct2-int8 \
     --local-dir models/nllb-200-distilled-1.3b-ct2
 ```
 
