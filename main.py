@@ -30,41 +30,80 @@ logger = logging.getLogger(__name__)
 # Hardware auto-detection
 # ---------------------------------------------------------------------------
 
+# Minimum free VRAM (bytes) required to load NLLB-200 on GPU.
+# NLLB int8 needs ~1.3 GB; we require 1.5 GB free to leave headroom.
+_NLLB_VRAM_REQUIRED = 1_500 * 1024 * 1024  # 1.5 GB
+
+
 @dataclass(frozen=True)
 class HardwareProfile:
     """Detected hardware capabilities and the compute settings derived from them."""
-    device: str           # "cuda" | "cpu"
+    stt_device: str        # "cuda" | "cpu" — for faster-whisper
     stt_compute_type: str  # compute_type for faster-whisper
+    nllb_device: str       # "cuda" | "cpu" — for CTranslate2 NLLB
     nllb_compute_type: str  # compute_type for CTranslate2 NLLB
 
 
 def detect_hardware() -> HardwareProfile:
     """Detect the best available execution backend and return matching settings.
 
-    Priority order:
-      1. CUDA (Nvidia GPU)  — float16 for Whisper, int8_float16 for NLLB
-      2. CPU fallback       — int8 quantization for both models
+    STT (Whisper) is placed on CUDA whenever available — it is the latency-
+    critical path.  NLLB-200 is only placed on CUDA if there is enough free
+    VRAM after Whisper loads (~1.5 GB headroom required); otherwise it falls
+    back to CPU int8 which is fast enough for translation workloads.
 
-    The function never raises; it always returns a usable profile so the
-    application can start on any hardware, including Intel N100 edge devices.
+    GPU tiers:
+      • Ampere+ (cc >= 8.0, e.g. RTX 30xx/40xx) — float16 / int8_float16
+      • Older CUDA (Pascal/Turing/Volta, cc < 8.0) — int8 on both
+      • No CUDA — everything on CPU int8
     """
-    if torch.cuda.is_available():
-        device_name = torch.cuda.get_device_name(0)
-        logger.info("CUDA detected: %s — using GPU acceleration.", device_name)
+    if not torch.cuda.is_available():
+        logger.warning(
+            "CUDA not available — running fully on CPU (int8). "
+            "Performance will be reduced."
+        )
         return HardwareProfile(
-            device="cuda",
-            stt_compute_type="float16",
-            nllb_compute_type="int8_float16",
+            stt_device="cpu", stt_compute_type="int8",
+            nllb_device="cpu", nllb_compute_type="int8",
         )
 
-    logger.warning(
-        "CUDA not available — falling back to CPU (int8). "
-        "Performance will be reduced. Consider using an Nvidia GPU for real-time use."
+    device_name = torch.cuda.get_device_name(0)
+    major, minor = torch.cuda.get_device_capability(0)
+    total_vram  = torch.cuda.get_device_properties(0).total_memory
+    total_gb    = total_vram / (1024 ** 3)
+
+    # Choose STT compute type based on architecture.
+    if major >= 8:
+        stt_compute = "float16"
+        arch_label  = "Ampere+ (float16)"
+    else:
+        stt_compute = "int8"
+        arch_label  = "Pascal/Turing/Volta (int8)"
+
+    # Decide where NLLB goes: GPU only if enough total VRAM.
+    # GTX 1060 3 GB: Whisper int8 ~1.5 GB → only ~1.5 GB left, too tight.
+    # We use total VRAM as a proxy; if < 6 GB, offload NLLB to CPU.
+    if total_vram >= 6 * 1024 ** 3:
+        nllb_device   = "cuda"
+        nllb_compute  = "int8_float16" if major >= 8 else "int8"
+        nllb_location = "GPU"
+    else:
+        nllb_device   = "cpu"
+        nllb_compute  = "int8"
+        nllb_location = "CPU (VRAM too small for both models)"
+
+    logger.info(
+        "CUDA detected: %s (cc %s.%s, %.1f GB VRAM) — arch=%s",
+        device_name, major, minor, total_gb, arch_label,
     )
+    logger.info(
+        "Model placement: Whisper → GPU (%s) | NLLB → %s (%s)",
+        stt_compute, nllb_location, nllb_compute,
+    )
+
     return HardwareProfile(
-        device="cpu",
-        stt_compute_type="int8",
-        nllb_compute_type="int8",
+        stt_device="cuda",    stt_compute_type=stt_compute,
+        nllb_device=nllb_device, nllb_compute_type=nllb_compute,
     )
 
 app = FastAPI()
@@ -180,10 +219,6 @@ async def startup() -> None:
 
     # --- Detect hardware and derive compute settings ---
     hw = detect_hardware()
-    logger.info(
-        "Hardware profile: device=%s  stt=%s  nllb=%s",
-        hw.device, hw.stt_compute_type, hw.nllb_compute_type,
-    )
 
     # --- Load Silero-VAD model ---
     try:
@@ -197,7 +232,7 @@ async def startup() -> None:
     # --- Load STT Engine ---
     try:
         stt_engine = STTEngine(
-            device=hw.device,
+            device=hw.stt_device,
             compute_type=hw.stt_compute_type,
         )
         stt_engine.load()
@@ -210,7 +245,7 @@ async def startup() -> None:
         translation_engine = TranslationEngine(
             model_path="models/nllb-200-distilled-1.3b-ct2",
             tokenizer_name="facebook/nllb-200-distilled-1.3B",
-            device=hw.device,
+            device=hw.nllb_device,
             compute_type=hw.nllb_compute_type,
         )
         translation_engine.load()

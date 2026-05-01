@@ -1,72 +1,336 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Live Captions — Offline STT &amp; Translation</title>
+<title>AI Pocket Interpreter — Live Captions</title>
 <style>
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  :root{
-    --bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;
-    --text:#e4e6ed;--muted:#8b8fa3;--accent:#6c8cff;
-    --accent-hover:#8aa4ff;--danger:#ff6b6b;--success:#51cf66;
-    --radius:8px;
-  }
-  html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text)}
+/* ============================================================
+   Reset
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* Layout */
-  .app{display:flex;flex-direction:column;height:100%;max-width:960px;margin:0 auto;padding:12px 16px}
+/* ============================================================
+   Design tokens — Dark (default)
+   ============================================================ */
+:root {
+  --bg:           #0f1117;
+  --surface:      #1a1d27;
+  --border:       #2a2d3a;
+  --text:         #e4e6ed;
+  --text-muted:   #8b8fa3;
+  --accent:       #6c8cff;
+  --accent-hover: #8aa4ff;
+  --danger:       #ff6b6b;
+  --success:      #51cf66;
+  --warn:         #fcc419;
 
-  /* Header / toolbar */
-  .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--border)}
-  .toolbar h1{font-size:1.1rem;font-weight:600;white-space:nowrap}
-  .spacer{flex:1}
+  /* Per-language accent colours */
+  --en-accent: #6c8cff;
+  --el-accent: #51cf66;
+  --es-accent: #ff9f43;
 
-  /* Status indicator */
-  .status{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted)}
-  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--danger);flex-shrink:0}
-  .status-dot.connected{background:var(--success)}
-  .status-dot.reconnecting{background:#fcc419;animation:pulse 1s infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  /* Per-language pane backgrounds — subtle differentiation */
+  --en-pane-bg: #12151f;
+  --el-pane-bg: #111a14;
+  --es-pane-bg: #1a1510;
 
-  /* Controls */
-  select,button{
-    font-size:.85rem;padding:6px 12px;border-radius:var(--radius);border:1px solid var(--border);
-    background:var(--surface);color:var(--text);cursor:pointer;transition:border-color .15s
-  }
-  select:hover,button:hover{border-color:var(--accent)}
-  button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  /* Per-language header backgrounds */
+  --en-header-bg: rgba(108, 140, 255, 0.12);
+  --el-header-bg: rgba( 81, 207, 102, 0.12);
+  --es-header-bg: rgba(255, 159,  67, 0.12);
 
-  /* Caption area */
-  .captions{flex:1;overflow-y:auto;padding:16px 0;display:flex;flex-direction:column;gap:6px}
-  .caption-line{
-    padding:8px 12px;border-radius:var(--radius);background:var(--surface);
-    line-height:1.5;font-size:1rem;word-wrap:break-word;animation:fadeIn .2s ease
-  }
-  @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  --radius:     8px;
+  --toolbar-h:  52px;
+  --transition: .18s ease;
+}
 
-  /* Multi-view grid */
-  .captions.multiview{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-  .multiview .mv-column{display:flex;flex-direction:column;gap:6px;min-width:0}
-  .mv-column .mv-header{font-size:.75rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:4px;position:sticky;top:0;background:var(--bg);z-index:1}
-  .mv-column .caption-line{font-size:.9rem}
+/* ============================================================
+   Light theme overrides
+   ============================================================ */
+[data-theme="light"] {
+  --bg:      #f0f2f8;
+  --surface: #ffffff;
+  --border:  #ced1de;
+  --text:    #1a1d27;
+  --text-muted: #6b6f82;
 
-  /* Empty state */
-  .empty-state{display:flex;align-items:center;justify-content:center;flex:1;color:var(--muted);font-size:.95rem;text-align:center;padding:40px 20px;line-height:1.6}
+  --en-pane-bg:    #f5f6ff;
+  --el-pane-bg:    #f3fbf5;
+  --es-pane-bg:    #fdf6ee;
 
-  /* Responsive */
-  @media(max-width:640px){
-    .app{padding:8px 10px}
-    .toolbar{gap:8px}
-    .toolbar h1{font-size:.95rem}
-    .captions.multiview{grid-template-columns:1fr;gap:14px}
-  }
+  --en-header-bg:  rgba(108, 140, 255, 0.10);
+  --el-header-bg:  rgba( 81, 207, 102, 0.10);
+  --es-header-bg:  rgba(255, 159,  67, 0.10);
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  transition: background var(--transition), color var(--transition);
+}
+
+/* ============================================================
+   App shell — full viewport, toolbar + content
+   ============================================================ */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;          /* fill exactly the viewport */
+  padding: 0 16px 12px;
+}
+
+/* ============================================================
+   Toolbar
+   ============================================================ */
+.toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  height: var(--toolbar-h);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  transition: background var(--transition);
+}
+
+.toolbar h1 {
+  font-size: 1rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.spacer { flex: 1; }
+
+/* Status */
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+  transition: background .3s;
+}
+.status-dot.connected    { background: var(--success); }
+.status-dot.reconnecting { background: var(--warn); animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+/* Buttons / selects */
+select, button {
+  font-size: .82rem;
+  padding: 5px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition),
+              color var(--transition);
+  white-space: nowrap;
+}
+select:hover, button:hover { border-color: var(--accent); }
+button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+#themeToggle  { font-size: 1rem; padding: 4px 9px; }
+
+/* ============================================================
+   Single-view wrapper
+   ============================================================ */
+#singleWrap {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#singleScroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 4px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scroll-behavior: smooth;
+}
+
+/* ============================================================
+   Multi-view wrapper — THREE FIXED PANES, created once
+   ============================================================ */
+#multiWrap {
+  flex: 1;
+  display: none;           /* hidden until multi-view is active */
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  padding-top: 8px;
+}
+
+/* When multi-view is active */
+#multiWrap.active {
+  display: flex;
+}
+
+/* Each language pane takes exactly 1/3 of the available height */
+.mv-pane {
+  flex: 1;                 /* equal share of the flex container */
+  min-height: 0;           /* allow flex children to shrink below content size */
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;      /* anchor for per-pane "↓" button */
+}
+
+/* Distinct background per language */
+.mv-pane.lang-en { background: var(--en-pane-bg); border-color: var(--en-accent); }
+.mv-pane.lang-el { background: var(--el-pane-bg); border-color: var(--el-accent); }
+.mv-pane.lang-es { background: var(--es-pane-bg); border-color: var(--es-accent); }
+
+/* Sticky header inside each pane */
+.mv-pane-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  border-bottom: 1px solid var(--border);
+}
+.mv-pane.lang-en .mv-pane-header { background: var(--en-header-bg); color: var(--en-accent); border-color: var(--en-accent); }
+.mv-pane.lang-el .mv-pane-header { background: var(--el-header-bg); color: var(--el-accent); border-color: var(--el-accent); }
+.mv-pane.lang-es .mv-pane-header { background: var(--es-header-bg); color: var(--es-accent); border-color: var(--es-accent); }
+
+.mv-pane-header .flag { font-size: 1.1rem; }
+
+/* Scrollable text area inside each pane */
+.mv-pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scroll-behavior: smooth;
+}
+
+/* Per-pane "↓ New" button */
+.pane-new-btn {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 5px 16px;
+  font-size: .78rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 3px 12px rgba(0,0,0,.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s;
+  z-index: 5;
+  white-space: nowrap;
+}
+.pane-new-btn.visible { opacity: 1; pointer-events: auto; }
+.pane-new-btn:hover   { background: var(--accent-hover); }
+
+/* ============================================================
+   Caption lines (shared by single and multi-view)
+   ============================================================ */
+.caption-line {
+  padding: 6px 10px;
+  line-height: 1.5;
+  font-size: 1.65rem;       /* large for projector readability */
+  word-wrap: break-word;
+  border-radius: 4px;
+  animation: fadeIn .2s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Single-view lines get a subtle surface background */
+#singleScroll .caption-line {
+  background: var(--surface);
+  margin-bottom: 2px;
+}
+
+/* ============================================================
+   Single-view "↓ New Messages" button
+   ============================================================ */
+#singleNewBtn {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 7px 20px;
+  font-size: .82rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0,0,0,.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s;
+  z-index: 20;
+  white-space: nowrap;
+}
+#singleNewBtn.visible { opacity: 1; pointer-events: auto; }
+#singleNewBtn:hover   { background: var(--accent-hover); }
+
+/* ============================================================
+   Empty state
+   ============================================================ */
+.empty-state {
+  color: var(--text-muted);
+  font-size: .95rem;
+  text-align: center;
+  padding: 30px 20px;
+  line-height: 1.7;
+  align-self: center;
+  width: 100%;
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 640px) {
+  .app { padding: 0 8px 8px; }
+  .caption-line { font-size: 1.15rem; }
+}
 </style>
 </head>
 <body>
 <div class="app">
+
+  <!-- ── Toolbar ─────────────────────────────────────────── -->
   <div class="toolbar">
-    <h1>&#127908; Live Captions</h1>
+    <h1>&#127908; AI Pocket Interpreter</h1>
     <div class="status">
       <span class="status-dot" id="statusDot"></span>
       <span id="statusText">Disconnected</span>
@@ -77,153 +341,304 @@
       <option value="el">Greek</option>
       <option value="es">Spanish</option>
     </select>
-    <button id="mvToggle" aria-label="Toggle multi-view">Multi-view</button>
+    <button id="mvToggle"    aria-label="Toggle multi-view">Multi-view</button>
+    <button id="themeToggle" aria-label="Toggle light/dark theme">&#9790;</button>
   </div>
 
-  <div class="captions" id="captions">
-    <div class="empty-state" id="emptyState">Waiting for speech&hellip;</div>
+  <!-- ── Single-view ─────────────────────────────────────── -->
+  <div id="singleWrap">
+    <div id="singleScroll">
+      <div class="empty-state" id="singleEmpty">Waiting for speech&hellip;</div>
+    </div>
+    <button id="singleNewBtn" aria-live="polite">&#8595; New Messages</button>
   </div>
-</div>
+
+  <!-- ── Multi-view: three fixed panes, built once in JS ─── -->
+  <div id="multiWrap">
+    <!-- Panes are injected by buildMultiviewPanes() on first toggle -->
+  </div>
+
+</div><!-- /.app -->
 
 <script>
-(function() {
+(function () {
   "use strict";
 
-  // DOM refs
-  var captions   = document.getElementById("captions");
-  var emptyState = document.getElementById("emptyState");
-  var langSelect = document.getElementById("langSelect");
-  var mvToggle   = document.getElementById("mvToggle");
-  var statusDot  = document.getElementById("statusDot");
-  var statusText = document.getElementById("statusText");
+  /* ── DOM refs ─────────────────────────────────────────── */
+  var singleWrap   = document.getElementById("singleWrap");
+  var singleScroll = document.getElementById("singleScroll");
+  var singleEmpty  = document.getElementById("singleEmpty");
+  var singleNewBtn = document.getElementById("singleNewBtn");
+  var multiWrap    = document.getElementById("multiWrap");
+  var langSelect   = document.getElementById("langSelect");
+  var mvToggle     = document.getElementById("mvToggle");
+  var themeToggle  = document.getElementById("themeToggle");
+  var statusDot    = document.getElementById("statusDot");
+  var statusText   = document.getElementById("statusText");
 
-  // State
-  var ws = null;
-  var multiview = false;
-  var reconnectDelay = 500;   // ms, doubles each attempt up to 16s
+  /* ── App state ────────────────────────────────────────── */
+  var ws             = null;
+  var multiview      = false;
+  var reconnectDelay = 500;
   var MAX_RECONNECT  = 16000;
 
-  // Multi-view column containers (created lazily)
-  var mvColumns = null; // {en: el, el: el, es: el}
+  /* ── Language metadata ────────────────────────────────── */
+  var LANGS = [
+    { code: "en", label: "English", flag: "🇬🇧" },
+    { code: "el", label: "Greek",   flag: "🇬🇷" },
+    { code: "es", label: "Spanish", flag: "🇪🇸" }
+  ];
 
-  // ---- Status helpers ----
-  function setStatus(state) {
-    statusDot.className = "status-dot " + state;
-    if (state === "connected")     statusText.textContent = "Connected";
-    else if (state === "reconnecting") statusText.textContent = "Reconnecting\u2026";
-    else                           statusText.textContent = "Disconnected";
+  /* ── Multi-view pane references (built once) ──────────── */
+  // paneState[code] = { body: <scrollEl>, autoScroll: bool, btn: <btnEl> }
+  var paneState = {};
+  var panesBuilt = false;
+
+  /* ================================================================
+     THEME
+     ================================================================ */
+  var THEME_KEY = "ai-interpreter-theme";
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    themeToggle.textContent = theme === "dark" ? "\u2600\uFE0F" : "\uD83C\uDF19";
+    themeToggle.setAttribute("aria-label",
+      theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
   }
 
-  // ---- Caption rendering ----
-  function clearEmpty() {
-    if (emptyState) { emptyState.remove(); emptyState = null; }
+  themeToggle.addEventListener("click", function () {
+    var next = document.documentElement.getAttribute("data-theme") === "dark"
+               ? "light" : "dark";
+    applyTheme(next);
+    localStorage.setItem(THEME_KEY, next);
+  });
+
+  /* ================================================================
+     SINGLE-VIEW AUTO-SCROLL
+     ================================================================ */
+  var SCROLL_THRESHOLD = 60;
+  var singleAutoScroll = true;
+
+  function singleIsNearBottom() {
+    return singleScroll.scrollHeight - singleScroll.scrollTop
+           - singleScroll.clientHeight <= SCROLL_THRESHOLD;
   }
 
+  function setSingleAutoScroll(on) {
+    singleAutoScroll = on;
+    singleNewBtn.classList.toggle("visible", !on);
+  }
+
+  singleScroll.addEventListener("scroll", function () {
+    if (singleIsNearBottom()) { if (!singleAutoScroll) setSingleAutoScroll(true);  }
+    else                      { if ( singleAutoScroll) setSingleAutoScroll(false); }
+  }, { passive: true });
+
+  singleNewBtn.addEventListener("click", function () {
+    singleScroll.scrollTop = singleScroll.scrollHeight;
+    setSingleAutoScroll(true);
+  });
+
+  /* ================================================================
+     MULTI-VIEW PANE BUILDER  (called once, on first toggle)
+     ================================================================ */
+  function buildMultiviewPanes() {
+    if (panesBuilt) return;
+    panesBuilt = true;
+
+    for (var i = 0; i < LANGS.length; i++) {
+      var lang = LANGS[i];
+
+      /* Outer pane */
+      var pane = document.createElement("div");
+      pane.className = "mv-pane lang-" + lang.code;
+      pane.setAttribute("aria-label", lang.label + " captions");
+
+      /* Sticky header */
+      var header = document.createElement("div");
+      header.className = "mv-pane-header";
+      header.innerHTML =
+        '<span class="flag">' + lang.flag + '</span>' +
+        '<span>' + lang.label + '</span>';
+
+      /* Scrollable body */
+      var body = document.createElement("div");
+      body.className = "mv-pane-body";
+
+      var emptyDiv = document.createElement("div");
+      emptyDiv.className = "empty-state";
+      emptyDiv.textContent = "Waiting for speech\u2026";
+      body.appendChild(emptyDiv);
+
+      /* Per-pane "↓ New" button */
+      var btn = document.createElement("button");
+      btn.className = "pane-new-btn";
+      btn.textContent = "\u2193 New";
+      btn.setAttribute("aria-live", "polite");
+
+      /* Wire up per-pane scroll logic */
+      (function (b, bt) {
+        var autoScroll = true;
+
+        function isNearBottom() {
+          return b.scrollHeight - b.scrollTop - b.clientHeight <= SCROLL_THRESHOLD;
+        }
+        function setAuto(on) {
+          autoScroll = on;
+          bt.classList.toggle("visible", !on);
+          // Store on the state object so appendMultiView can read it
+          paneState[b._langCode].autoScroll = on;
+        }
+
+        b.addEventListener("scroll", function () {
+          if (isNearBottom()) { if (!autoScroll) setAuto(true);  }
+          else                { if ( autoScroll) setAuto(false); }
+        }, { passive: true });
+
+        bt.addEventListener("click", function () {
+          b.scrollTop = b.scrollHeight;
+          setAuto(true);
+        });
+
+        // Expose helpers on the state object after it's created below
+        b._setAuto = setAuto;
+        b._autoScroll = function () { return autoScroll; };
+      }(body, btn));
+
+      body._langCode = lang.code;
+
+      pane.appendChild(header);
+      pane.appendChild(body);
+      pane.appendChild(btn);
+      multiWrap.appendChild(pane);
+
+      paneState[lang.code] = {
+        body:       body,
+        btn:        btn,
+        autoScroll: true,
+        empty:      emptyDiv   // reference to remove on first message
+      };
+    }
+  }
+
+  /* ================================================================
+     CAPTION RENDERING
+     ================================================================ */
+
+  // ── Single-view ──────────────────────────────────────────────────
   function appendSingleView(payload) {
-    clearEmpty();
+    // Remove empty state on first message
+    if (singleEmpty) {
+      singleEmpty.remove();
+      singleEmpty = null;
+    }
+
     var lang = langSelect.value;
-    var text = payload.translations[lang];
-    if (text === undefined || text === null) text = "";
+    var text = (payload.translations && payload.translations[lang]) || "";
+
     var div = document.createElement("div");
     div.className = "caption-line";
     div.textContent = text || "(no translation)";
-    captions.appendChild(div);
-    captions.scrollTop = captions.scrollHeight;
+    singleScroll.appendChild(div);
+
+    if (singleAutoScroll) singleScroll.scrollTop = singleScroll.scrollHeight;
   }
 
-  function ensureMultiviewColumns() {
-    if (mvColumns) return;
-    captions.innerHTML = "";
-    mvColumns = {};
-    var langs = [
-      {code: "en", label: "English"},
-      {code: "el", label: "Greek"},
-      {code: "es", label: "Spanish"}
-    ];
-    for (var i = 0; i < langs.length; i++) {
-      var col = document.createElement("div");
-      col.className = "mv-column";
-      var header = document.createElement("div");
-      header.className = "mv-header";
-      header.textContent = langs[i].label;
-      col.appendChild(header);
-      captions.appendChild(col);
-      mvColumns[langs[i].code] = col;
-    }
-  }
-
+  // ── Multi-view ───────────────────────────────────────────────────
+  // Appends ONE caption line into each of the three fixed panes.
   function appendMultiView(payload) {
-    clearEmpty();
-    ensureMultiviewColumns();
-    var codes = ["en", "el", "es"];
-    for (var i = 0; i < codes.length; i++) {
-      var text = payload.translations[codes[i]];
-      if (text === undefined || text === null) text = "";
+    for (var i = 0; i < LANGS.length; i++) {
+      var code  = LANGS[i].code;
+      var state = paneState[code];
+      var text  = (payload.translations && payload.translations[code]) || "";
+
+      // Remove the "Waiting…" placeholder on first real message
+      if (state.empty) {
+        state.empty.remove();
+        state.empty = null;
+      }
+
       var div = document.createElement("div");
       div.className = "caption-line";
       div.textContent = text || "(no translation)";
-      mvColumns[codes[i]].appendChild(div);
+      state.body.appendChild(div);
+
+      // Auto-scroll this pane if it hasn't been manually scrolled up
+      if (state.body._autoScroll()) {
+        state.body.scrollTop = state.body.scrollHeight;
+      }
     }
-    // scroll all columns
-    for (var j = 0; j < codes.length; j++) {
-      mvColumns[codes[j]].scrollTop = mvColumns[codes[j]].scrollHeight;
-    }
-    captions.scrollTop = captions.scrollHeight;
   }
 
-  // ---- Multi-view toggle ----
-  mvToggle.addEventListener("click", function() {
+  /* ================================================================
+     MULTI-VIEW TOGGLE
+     ================================================================ */
+  mvToggle.addEventListener("click", function () {
     multiview = !multiview;
     mvToggle.classList.toggle("active", multiview);
+
     if (multiview) {
-      captions.classList.add("multiview");
-      mvColumns = null; // rebuild on next payload
-      captions.innerHTML = "";
-      ensureMultiviewColumns();
+      // Build panes the first time; subsequent toggles reuse them
+      buildMultiviewPanes();
+      singleWrap.style.display  = "none";
+      multiWrap.classList.add("active");
+      langSelect.style.display  = "none";
     } else {
-      captions.classList.remove("multiview");
-      mvColumns = null;
-      captions.innerHTML = '<div class="empty-state">Switched to single view</div>';
+      singleWrap.style.display  = "";
+      multiWrap.classList.remove("active");
+      langSelect.style.display  = "";
     }
   });
 
-  // ---- WebSocket ----
+  /* ================================================================
+     STATUS
+     ================================================================ */
+  function setStatus(state) {
+    statusDot.className = "status-dot " + state;
+    statusText.textContent =
+      state === "connected"    ? "Connected"        :
+      state === "reconnecting" ? "Reconnecting\u2026" :
+                                 "Disconnected";
+  }
+
+  /* ================================================================
+     WEBSOCKET
+     ================================================================ */
   function connect() {
     var protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    var url = protocol + "//" + location.host + "/ws";
-    ws = new WebSocket(url);
+    ws = new WebSocket(protocol + "//" + location.host + "/ws");
 
-    ws.onopen = function() {
+    ws.onopen = function () {
       setStatus("connected");
-      reconnectDelay = 500; // reset backoff
+      reconnectDelay = 500;
     };
 
-    ws.onmessage = function(event) {
+    ws.onmessage = function (event) {
       var payload;
-      try { payload = JSON.parse(event.data); } catch(e) { console.error("Invalid JSON:", e); return; }
+      try { payload = JSON.parse(event.data); }
+      catch (e) { console.error("Invalid JSON:", e); return; }
+
       if (multiview) appendMultiView(payload);
       else           appendSingleView(payload);
     };
 
-    ws.onclose = function() {
+    ws.onclose = function () {
       setStatus("reconnecting");
-      scheduleReconnect();
+      setTimeout(function () {
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT);
+        connect();
+      }, reconnectDelay);
     };
 
-    ws.onerror = function() {
-      // onclose will fire after onerror, reconnect handled there
-    };
+    ws.onerror = function () { /* onclose handles reconnect */ };
   }
 
-  function scheduleReconnect() {
-    setTimeout(function() {
-      reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT);
-      connect();
-    }, reconnectDelay);
-  }
-
-  // Start
+  /* ================================================================
+     INIT
+     ================================================================ */
+  applyTheme(localStorage.getItem(THEME_KEY) || "dark");
   connect();
+
 })();
 </script>
 </body>
